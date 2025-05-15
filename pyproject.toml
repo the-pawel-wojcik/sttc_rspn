@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "static_response_properties"
+name = "sttc_rspn"
 version = "0.1.0"
-description = "Static response properties"
+description = "Static Response Properties"
 readme = "readme.md"
 authors = [
   {name = "Paweł Wójcik", email = "pawel.wojcik5@gmail.com"},
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.urls]
-repository = "https://github.com/the-pawel-wojcik/static_response_properties.git"
+repository = "https://github.com/the-pawel-wojcik/sttc_rspn.git"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/static_response_properties"]
+packages = ["src/sttc_rspn"]

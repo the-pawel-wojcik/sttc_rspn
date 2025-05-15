@@ -15,6 +15,7 @@ dependencies = [
   "scipy",
   "psi4",
   "pdaggerq",
+  "DePrinceLab",
 ]
 
 [project.urls]

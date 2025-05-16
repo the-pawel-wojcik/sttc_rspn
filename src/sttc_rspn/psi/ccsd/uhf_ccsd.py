@@ -12,9 +12,89 @@ from sttc_rspn.psi.ccsd.equations.doubles_uhf import (
 )
 
 
+class DIIS:
+
+    def __init__(self, noa: int, nva: int, nob: int, nvb: int) -> None:
+        self.diis_coefficients = None
+        self.storage_size = 0
+        self.noa = noa
+        self.nva = nva
+        self.nob = nob
+        self.nvb = nvb
+        total_residual_dim = nva * noa + nvb * nob
+        total_residual_dim += nva * nva * noa * noa
+        total_residual_dim += nva * nvb * noa * nob
+        total_residual_dim += nvb * nvb * nob * nob
+        self.residuals_matrix = np.zeros(shape=(total_residual_dim, 0))
+        self.start_idx = 3
+
+    def find_new_vec(self, guess, change):
+        if self.storage_size < self.start_idx:
+            return guess
+
+        self.add_new_residual(guess)
+        # if len > max_lex self.residuals_matrix.pop(0)
+        matrix, rhs = self.build_linear_problem()
+        c = np.linalg.solve(matrix, rhs)
+        assert self.residuals_matrix.shape[1] == c.shape[0]
+        new_guess = self.residuals_matrix @ c
+        return new_guess
+
+    def add_new_residual(self, residuals: dict[str, NDArray]) -> None:
+        """ Hoping that the new residual looks like this
+        ```
+        residuals = {
+            'aa': NDarray,
+            'bb': NDarray,
+            'aaaa': NDarray,
+            'abab': NDarray,
+            'abba': NDarray,
+            'baab': NDarray,
+            'baba': NDarray,
+            'bbbb': NDarray,
+        }
+        ```
+        """
+        noa = self.noa
+        nob = self.nob
+        nva = self.nva
+        nvb = self.nvb
+        self.residuals_matrix = np.hstack(
+            (
+                self.residuals_matrix,
+                np.hstack(
+                    (
+                        residuals['aa'].reshape(nva * noa),
+                        residuals['bb'].reshape(nvb * nob),
+                        residuals['aaaa'].reshape(nva * nva * noa * noa),
+                        residuals['abab'].reshape(nva * nvb * noa * nob),
+                        residuals['bbbb'].reshape(nvb * nvb * nob * nob),
+                    )
+                ).reshape(-1, 1),
+            )
+        )
+        self.storage_size += 1
+
+    def build_linear_problem(self) -> tuple[NDArray, NDArray]:
+        dim = len(self.residuals_matrix[-1])
+        matrix = self.residuals_matrix @ self.residuals_matrix.T
+        matrix = np.vstack((
+            matrix,
+            -1 * np.ones((1, dim))
+        ))
+        matrix = np.hstack((
+            matrix, -1 * np.ones((dim + 1, 1))
+        ))
+        matrix[-1][-1] = 0.0
+        rhs = np.zeros((dim + 1, 1))
+        rhs[-1][0] = -1
+        return matrix, rhs
+
+
 class UHF_CCSD:
 
     def __init__(self, intermediates: Intermediates) -> None:
+        self.intermediates = intermediates
         noa = intermediates.noa
         nva = intermediates.nmo - noa
         nob = intermediates.nob
@@ -24,6 +104,10 @@ class UHF_CCSD:
         self.g_aaaa = intermediates.g_aaaa
         self.g_abab = intermediates.g_abab
         self.g_bbbb = intermediates.g_bbbb
+        self.noa = noa
+        self.nva = nva
+        self.nob = nob
+        self.nvb = nvb
         self.oa = intermediates.oa
         self.ob = intermediates.ob
         self.va = intermediates.va
@@ -36,66 +120,139 @@ class UHF_CCSD:
         self.t2_abab = np.zeros(shape=(nva, nvb, noa, nob))
         self.t2_bbbb = np.zeros(shape=(nvb, nvb, nob, nob))
 
-    def find_t_amplitudes(self):
+        oa = self.intermediates.oa
+        va = self.intermediates.va
+        ob = self.intermediates.ob
+        vb = self.intermediates.vb
+        new_axis = np.newaxis
+
+        fock_energy_a = self.intermediates.f_aa.diagonal()
+        fock_energy_b = self.intermediates.f_bb.diagonal()
+
+        # a set of matrices where for each matrix the index [a][i] or
+        # [a][b][i][j] (you get the point) gives you the inverse of the sum
+        # of the fock eigenvalues for these indices e.g
+        # dampers['aa'][a][i] = 1 / (-fock_aa[a][a] + fock_aa[i][i])
+        # See that the values are attempted to be negative bc, the virtual
+        # eigenvalues come with a minus sign.
+        self.dampers = {
+            'aa': 1.0 / (
+                - fock_energy_a[va, new_axis]
+                + fock_energy_a[new_axis, oa]
+            ),
+            'bb': 1.0 / (
+                - fock_energy_b[vb, new_axis]
+                + fock_energy_b[new_axis, ob]
+            ),
+            'aaaa': 1.0 / (
+                - fock_energy_a[va, new_axis, new_axis, new_axis]
+                - fock_energy_a[new_axis, va, new_axis, new_axis]
+                + fock_energy_a[new_axis, new_axis, oa, new_axis]
+                + fock_energy_a[new_axis, new_axis, new_axis, oa]
+            ),
+            'abab': 1.0 / (
+                - fock_energy_a[va, new_axis, new_axis, new_axis]
+                - fock_energy_b[new_axis, vb, new_axis, new_axis]
+                + fock_energy_a[new_axis, new_axis, oa, new_axis]
+                + fock_energy_b[new_axis, new_axis, new_axis, ob]
+            ),
+            'bbbb': 1.0 / (
+                - fock_energy_b[vb, new_axis, new_axis, new_axis]
+                - fock_energy_b[new_axis, vb, new_axis, new_axis]
+                + fock_energy_b[new_axis, new_axis, ob, new_axis]
+                + fock_energy_b[new_axis, new_axis, new_axis, ob]
+            ),
+        }
+
+    def solve_cc_equations(self):
         MAX_CCSD_ITER = 50
         ENERGY_CONVERGENCE = 1e-6
         RESIDUALS_CONVERGENCE = 1e-6
-        e_fmt = '12.6f'
-        old_energy = self.get_energy()
 
-        diis = {
-            'aa': list(),
-            'bb': list(),
-            'aaaa': list(),
-            'abab': list(),
-            'abba': list(),
-            'baab': list(),
-            'baba': list(),
-            'bbbb': list(),
-        }
+        # diis = DIIS(noa=self.noa, nva=self.nva, nob=self.nob, nvb=self.nvb)
 
         for iter_idx in range(MAX_CCSD_ITER):
-            current_t1_aa = np.zeros_like(self.t1_aa)
+            residuals = self.calculate_residuals()
+            new_t_amps = self.calculate_new_amplitudes(residuals)
 
-            singles_residual_aa = self.get_singles_residual_aa()
-            singles_residual_bb = self.get_singles_residual_bb()
-
-            diis['aa'].append(singles_residual_aa)
-            diis['bb'].append(singles_residual_bb)
-
-            args = (
-                self.intermediates,
-                self.t1_aa, self.t1_bb,
-                self.t2_aaaa, self.t2_abab, self.t2_bbbb
-            )
-            diis['aaaa'].append(get_doubles_residual_aaaa(*args))
-            diis['abab'].append(get_doubles_residual_abab(*args))
-            diis['abba'].append(get_doubles_residual_abba(*args))
-            diis['baab'].append(get_doubles_residual_baab(*args))
-            diis['baba'].append(get_doubles_residual_baba(*args))
-            diis['bbbb'].append(get_doubles_residual_bbbb(*args))
-
-            residuals_norm = sum(
-                np.linalg.norm(diis[residual][-1]) for residual in [
-                    'aa', 'bb', 'aaaa', 'abab', 'abba', 'baab', 'baba', 'bbbb'
-                ]
-            )
-
-            print(f"Iteration {iter_idx:>2d}:", end='')
+            old_energy = self.get_energy()
+            self.update_t_amps(new_t_amps)
             current_energy = self.get_energy()
             energy_change = current_energy - old_energy
-            print(f' {current_energy:{e_fmt}}', end='')
-            print(f' {energy_change:{e_fmt}}')
+            residuals_norm = self.get_residuals_norm(residuals)
+            self.print_iteration_report(
+                iter_idx, current_energy, energy_change, residuals_norm
+            )
 
             energy_converged = np.abs(energy_change) < ENERGY_CONVERGENCE
             residuals_converged = residuals_norm < RESIDUALS_CONVERGENCE
 
-            self.t1_aa = current_t1_aa
             if energy_converged and residuals_converged:
                 break
             old_energy = current_energy
         else:
             raise RuntimeError("CCSD didn't converge")
+
+    def get_residuals_norm(self, residuals):
+        return sum(
+            np.linalg.norm(residuals[component]) for component in [
+                'aa', 'bb', 'aaaa', 'abab', 'abba', 'baab', 'baba', 'bbbb'
+            ]
+        )
+
+    def print_iteration_report(
+        self, iter_idx, current_energy, energy_change, residuals_norm,
+    ):
+        e_fmt = '12.6f'
+        print(f"Iteration {iter_idx:>2d}:", end='')
+        print(f' {current_energy:{e_fmt}}', end='')
+        print(f' {energy_change:{e_fmt}}', end='')
+        print(f' {residuals_norm:{e_fmt}}')
+
+    def update_t_amps(self, new_t_amps):
+        self.t1_aa = new_t_amps['aa']
+        self.t1_bb = new_t_amps['bb']
+        self.t2_aaaa = new_t_amps['aaaa']
+        self.t2_abab = new_t_amps['abab']
+        self.t2_bbbb = new_t_amps['bbbb']
+
+    def calculate_residuals(self):
+        residuals = dict()
+
+        residuals['aa'] = self.get_singles_residual_aa()
+        residuals['bb'] = self.get_singles_residual_bb()
+
+        kwargs = dict(
+            intermediates=self.intermediates,
+            t1_aa=self.t1_aa,
+            t1_bb=self.t1_bb,
+            t2_aaaa=self.t2_aaaa,
+            t2_abab=self.t2_abab,
+            t2_bbbb=self.t2_bbbb,
+        )
+        residuals['aaaa'] = get_doubles_residual_aaaa(**kwargs)
+        residuals['abab'] = get_doubles_residual_abab(**kwargs)
+        residuals['abba'] = get_doubles_residual_abba(**kwargs)
+        residuals['baab'] = get_doubles_residual_baab(**kwargs)
+        residuals['baba'] = get_doubles_residual_baba(**kwargs)
+        residuals['bbbb'] = get_doubles_residual_bbbb(**kwargs)
+
+        return residuals
+
+    def calculate_new_amplitudes(self, residuals):
+        new_t_amps = dict()
+        new_t_amps['aa'] =\
+            self.t1_aa + residuals['aa'] * self.dampers['aa']
+        new_t_amps['bb'] =\
+            self.t1_bb + residuals['bb'] * self.dampers['bb']
+        new_t_amps['aaaa'] =\
+            self.t2_aaaa + residuals['aaaa'] * self.dampers['aaaa']
+        new_t_amps['abab'] =\
+            self.t2_abab + residuals['abab'] * self.dampers['abab']
+        new_t_amps['bbbb'] =\
+            self.t2_bbbb + residuals['bbbb'] * self.dampers['bbbb']
+
+        return new_t_amps
 
     def get_energy(self) -> float:
         f_aa = self.f_aa

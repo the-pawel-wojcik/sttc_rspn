@@ -16,9 +16,9 @@ def get_doubles_residual_aaaa(
     g_abab = intermediates.g_abab
     g_bbbb = intermediates.g_bbbb
     va = intermediates.va
-    vb = intermediates.va
-    oa = intermediates.va
-    ob = intermediates.va
+    vb = intermediates.vb
+    oa = intermediates.oa
+    ob = intermediates.ob
 
     # The spin aaaa case.
     contracted_intermediate = -1.0 * einsum('kj,baik->abij', f_aa[oa, oa], t2_aaaa)
@@ -122,9 +122,9 @@ def get_doubles_residual_abab(
     g_abab = intermediates.g_abab
     g_bbbb = intermediates.g_bbbb
     va = intermediates.va
-    vb = intermediates.va
-    oa = intermediates.va
-    ob = intermediates.va
+    vb = intermediates.vb
+    oa = intermediates.oa
+    ob = intermediates.ob
 
     # The spin aaaa case.
     doubles_res_abab = einsum('kj,abik->abij', f_bb[ob, ob], t2_abab)
@@ -246,9 +246,9 @@ def get_doubles_residual_abba(
     g_abab = intermediates.g_abab
     g_bbbb = intermediates.g_bbbb
     va = intermediates.va
-    vb = intermediates.va
-    oa = intermediates.va
-    ob = intermediates.va
+    vb = intermediates.vb
+    oa = intermediates.oa
+    ob = intermediates.ob
 
     doubles_res_abba = -1.0 * einsum('kj,abki->abij', f_aa[oa, oa], t2_abab)
     doubles_res_abba += -1.0 * einsum('ki,abjk->abij', f_bb[ob, ob], t2_abab)
@@ -368,9 +368,9 @@ def get_doubles_residual_baab(
     g_abab = intermediates.g_abab
     g_bbbb = intermediates.g_bbbb
     va = intermediates.va
-    vb = intermediates.va
-    oa = intermediates.va
-    ob = intermediates.va
+    vb = intermediates.vb
+    oa = intermediates.oa
+    ob = intermediates.ob
 
     doubles_res_baab = -1.0 * einsum('kj,baik->abij', f_bb[ob, ob], t2_abab)
     doubles_res_baab += -1.0 * einsum('ki,bakj->abij', f_aa[oa, oa], t2_abab)
@@ -490,9 +490,9 @@ def get_doubles_residual_baba(
     g_abab = intermediates.g_abab
     g_bbbb = intermediates.g_bbbb
     va = intermediates.va
-    vb = intermediates.va
-    oa = intermediates.va
-    ob = intermediates.va
+    vb = intermediates.vb
+    oa = intermediates.oa
+    ob = intermediates.ob
 
     doubles_res_baba = einsum('kj,baki->abij', f_aa[oa, oa], t2_abab)
     doubles_res_baba += einsum('ki,bajk->abij', f_bb[ob, ob], t2_abab)
@@ -611,9 +611,9 @@ def get_doubles_residual_bbbb(
     g_abab = intermediates.g_abab
     g_bbbb = intermediates.g_bbbb
     va = intermediates.va
-    vb = intermediates.va
-    oa = intermediates.va
-    ob = intermediates.va
+    vb = intermediates.vb
+    oa = intermediates.oa
+    ob = intermediates.ob
 
     contracted_intermediate = -1.0 * einsum('kj,baik->abij', f_bb[ob, ob], t2_bbbb)
     doubles_res_bbbb = contracted_intermediate - einsum('abij->abji', contracted_intermediate) 

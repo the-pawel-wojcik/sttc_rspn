@@ -120,6 +120,12 @@ class UHF_CCSD:
         self.t2_abab = np.zeros(shape=(nva, nvb, noa, nob))
         self.t2_bbbb = np.zeros(shape=(nvb, nvb, nob, nob))
 
+        # spin-changing terms that do not appear in the CC equations
+        # but appear as residues
+        self.t2_abba = np.zeros(shape=(nva, nvb, nob, noa))
+        self.t2_baab = np.zeros(shape=(nvb, nva, noa, nob))
+        self.t2_baba = np.zeros(shape=(nvb, nva, nob, noa))
+
         oa = self.intermediates.oa
         va = self.intermediates.va
         ob = self.intermediates.ob
@@ -162,6 +168,25 @@ class UHF_CCSD:
                 + fock_energy_b[new_axis, new_axis, ob, new_axis]
                 + fock_energy_b[new_axis, new_axis, new_axis, ob]
             ),
+            # spin-changing terms
+            'abba': 1.0 / (
+                - fock_energy_a[va, new_axis, new_axis, new_axis]
+                - fock_energy_b[new_axis, vb, new_axis, new_axis]
+                + fock_energy_b[new_axis, new_axis, ob, new_axis]
+                + fock_energy_a[new_axis, new_axis, new_axis, oa]
+            ),
+            'baab': 1.0 / (
+                - fock_energy_b[vb, new_axis, new_axis, new_axis]
+                - fock_energy_a[new_axis, va, new_axis, new_axis]
+                + fock_energy_a[new_axis, new_axis, oa, new_axis]
+                + fock_energy_b[new_axis, new_axis, new_axis, ob]
+            ),
+            'baba': 1.0 / (
+                - fock_energy_b[vb, new_axis, new_axis, new_axis]
+                - fock_energy_a[new_axis, va, new_axis, new_axis]
+                + fock_energy_b[new_axis, new_axis, ob, new_axis]
+                + fock_energy_a[new_axis, new_axis, new_axis, oa]
+            ),
         }
 
     def solve_cc_equations(self):
@@ -194,11 +219,7 @@ class UHF_CCSD:
             raise RuntimeError("CCSD didn't converge")
 
     def get_residuals_norm(self, residuals):
-        return sum(
-            np.linalg.norm(residuals[component]) for component in [
-                'aa', 'bb', 'aaaa', 'abab', 'abba', 'baab', 'baba', 'bbbb'
-            ]
-        )
+        return sum(np.linalg.norm(residual) for residual in residuals.values())
 
     def print_iteration_report(
         self, iter_idx, current_energy, energy_change, residuals_norm,
@@ -215,6 +236,10 @@ class UHF_CCSD:
         self.t2_aaaa = new_t_amps['aaaa']
         self.t2_abab = new_t_amps['abab']
         self.t2_bbbb = new_t_amps['bbbb']
+        # spin-changing terms
+        self.t2_abba = new_t_amps['abba']
+        self.t2_baab = new_t_amps['baab']
+        self.t2_baba = new_t_amps['baba']
 
     def calculate_residuals(self):
         residuals = dict()
@@ -251,6 +276,13 @@ class UHF_CCSD:
             self.t2_abab + residuals['abab'] * self.dampers['abab']
         new_t_amps['bbbb'] =\
             self.t2_bbbb + residuals['bbbb'] * self.dampers['bbbb']
+        # spin-changing terms
+        new_t_amps['abba'] =\
+            self.t2_abba + residuals['abba'] * self.dampers['abba']
+        new_t_amps['baab'] =\
+            self.t2_baab + residuals['baab'] * self.dampers['baab']
+        new_t_amps['baba'] =\
+            self.t2_baba + residuals['baba'] * self.dampers['baba']
 
         return new_t_amps
 
